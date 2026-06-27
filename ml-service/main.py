@@ -1,29 +1,59 @@
-from typing import Optional
+import os
 
+import numpy as np
+import pandas as pd
+import joblib
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-app = FastAPI(title="Fraud Detection ML Service")
+from service.isolation_forest import IsolationForest  # noqa: F401 (needed to load the IF)
+from service.features import build_features
+
+app = FastAPI(title="Fraud ML Service")
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+MODELS_DIR = os.path.join(HERE, "models")
+
+iso_model = joblib.load(os.path.join(MODELS_DIR, "isolation_forest.joblib"))
+xgb_model = joblib.load(os.path.join(MODELS_DIR, "xgboost_hybrid.joblib"))
+recipe = joblib.load(os.path.join(MODELS_DIR, "feature_recipe.joblib"))
+CATEGORY_LIST = recipe["category_list"]
+print(f"Models loaded. {len(CATEGORY_LIST)} categories, "
+      f"{len(recipe['feature_columns'])} features.")
 
 
-# What Spring will send us. snake_case is the JSON contract — keep these exact
-# names; we'll make the Spring side match in the next step.
 class PredictRequest(BaseModel):
-    amount: float
-    merchant_category: Optional[str] = None
-    channel: str
-    location_lat: Optional[float] = None
-    location_lon: Optional[float] = None
-    device_id: Optional[str] = None
+    # Raw transaction + cardholder fields. build_features() converts these into
+    # the exact numeric features the model was trained on.
+    trans_date_trans_time: str   # "2020-06-21 12:14:25"
+    dob: str                     # cardholder date of birth, "1988-03-09"
+    amt: float
+    category: str                # one of the trained merchant categories
+    lat: float                   # cardholder home latitude
+    long: float                  # cardholder home longitude
+    merch_lat: float             # merchant latitude
+    merch_long: float            # merchant longitude
+    gender: str                  # "M" or "F"
+    city_pop: int
 
 
-# What we send back: the layered scores + final decision.
 class PredictResponse(BaseModel):
     isolation_forest_score: float
     xgboost_probability: float
     fraud_score: float
-    risk_level: str   # GREEN / YELLOW / ORANGE / RED
-    decision: str     # APPROVED / OTP_REQUIRED / DECLINED
+    risk_level: str
+    decision: str
+
+
+def risk_from_score(p: float):
+    if p < 0.50:
+        return "GREEN", "APPROVED"
+    elif p < 0.80:
+        return "YELLOW", "APPROVED"
+    elif p < 0.95:
+        return "ORANGE", "OTP_REQUIRED"
+    else:
+        return "RED", "DECLINED"
 
 
 @app.get("/health")
@@ -33,22 +63,31 @@ def health():
 
 @app.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest):
-    # TEMPORARY stub. The real hybrid pipeline (from-scratch Isolation Forest +
-    # XGBoost + three-layer scoring) replaces this. For now, the same trivial
-    # amount rule your Spring placeholder used, so the wiring is testable and
-    # behaviour matches what you've already seen.
-    amount = req.amount
-    if amount < 10000:
-        risk, score, decision = "GREEN", 0.10, "APPROVED"
-    elif amount < 50000:
-        risk, score, decision = "ORANGE", 0.70, "OTP_REQUIRED"
-    else:
-        risk, score, decision = "RED", 0.95, "DECLINED"
+    # Build a 1-row DataFrame with the columns build_features expects, then
+    # reuse the EXACT training-time feature logic.
+    row = pd.DataFrame([{
+        "trans_date_trans_time": req.trans_date_trans_time,
+        "dob": req.dob,
+        "amt": req.amt,
+        "category": req.category,
+        "lat": req.lat,
+        "long": req.long,
+        "merch_lat": req.merch_lat,
+        "merch_long": req.merch_long,
+        "gender": req.gender,
+        "city_pop": req.city_pop,
+    }])
 
+    X = build_features(row, CATEGORY_LIST).values          # (1, n_features)
+    if_score = float(iso_model.anomaly_score(X)[0])
+    X_hybrid = np.column_stack([X, [[if_score]]])          # add IF score column
+    proba = float(xgb_model.predict_proba(X_hybrid)[0, 1])
+
+    risk, decision = risk_from_score(proba)
     return PredictResponse(
-        isolation_forest_score=score,
-        xgboost_probability=score,
-        fraud_score=score,
+        isolation_forest_score=round(if_score, 4),
+        xgboost_probability=round(proba, 4),
+        fraud_score=round(proba, 4),
         risk_level=risk,
         decision=decision,
     )

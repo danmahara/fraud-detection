@@ -1,6 +1,5 @@
 package com.fraud.detection.transaction;
 
-import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
 import org.springframework.http.HttpStatus;
@@ -12,6 +11,9 @@ import com.fraud.detection.entity.Account;
 import com.fraud.detection.entity.Transaction;
 import com.fraud.detection.entity.enums.RiskLevel;
 import com.fraud.detection.entity.enums.TransactionStatus;
+import com.fraud.detection.ml.MlScoringClient;
+import com.fraud.detection.ml.dto.MlPredictRequest;
+import com.fraud.detection.ml.dto.MlPredictResponse;
 import com.fraud.detection.repository.AccountRepository;
 import com.fraud.detection.transaction.dto.CreateTransactionRequest;
 import com.fraud.detection.transaction.dto.TransactionResponse;
@@ -21,28 +23,28 @@ public class TransactionService {
 
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
+    private final MlScoringClient mlScoringClient;
 
     public TransactionService(AccountRepository accountRepository,
-            TransactionRepository transactionRepository) {
+            TransactionRepository transactionRepository,
+            MlScoringClient mlScoringClient) {
         this.accountRepository = accountRepository;
         this.transactionRepository = transactionRepository;
+        this.mlScoringClient = mlScoringClient;
     }
 
     @Transactional
     public TransactionResponse create(String userEmail, CreateTransactionRequest request) {
 
-        // 1. Find the account being charged.
         Account account = accountRepository.findById(request.accountId())
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "Account not found"));
 
-        // 2. Never trust the body alone: the account must belong to the caller.
         if (!account.getUser().getEmail().equals(userEmail)) {
             throw new ResponseStatusException(
                     HttpStatus.FORBIDDEN, "This account does not belong to you");
         }
 
-        // 3. Build the transaction record.
         Transaction txn = new Transaction();
         txn.setAccount(account);
         txn.setAmount(request.amount());
@@ -55,29 +57,28 @@ public class TransactionService {
         txn.setTransactionTime(OffsetDateTime.now());
         txn.setStatus(TransactionStatus.PENDING);
 
-        // 4. TEMPORARY placeholder scoring.
-        // The real GREEN/YELLOW/ORANGE/RED decision will come from the
-        // Kafka -> FastAPI (Isolation Forest + XGBoost + context) pipeline
-        // we build next. For now, a trivial amount rule so we can see the
-        // decision flow working end to end.
-        RiskLevel risk = placeholderRisk(request.amount());
-        txn.setRiskLevel(risk);
+        // --- Real scoring: call the FastAPI ML service synchronously ---
+        MlPredictRequest mlRequest = new MlPredictRequest(
+                request.features(), // V-feature vector (null for manual entry)
+                request.amount(),
+                request.merchantCategory(),
+                request.channel().name(), // Channel enum -> "POS" etc.
+                request.locationLat(),
+                request.locationLon(),
+                request.deviceId());
+        MlPredictResponse ml = mlScoringClient.predict(mlRequest);
 
-        String decision;
+        // Persist what the ML service returned.
+        RiskLevel risk = RiskLevel.valueOf(ml.riskLevel());
+        txn.setRiskLevel(risk);
+        txn.setIsolationForestScore(ml.isolationForestScore());
+        txn.setXgboostProbability(ml.xgboostProbability());
+        txn.setFraudScore(ml.fraudScore());
+
         switch (risk) {
-            case GREEN, YELLOW -> {
-                txn.setStatus(TransactionStatus.APPROVED);
-                decision = "APPROVED";
-            }
-            case ORANGE -> {
-                txn.setStatus(TransactionStatus.PENDING); // awaiting OTP step-up
-                decision = "OTP_REQUIRED";
-            }
-            case RED -> {
-                txn.setStatus(TransactionStatus.BLOCKED);
-                decision = "DECLINED";
-            }
-            default -> decision = "APPROVED";
+            case GREEN, YELLOW -> txn.setStatus(TransactionStatus.APPROVED);
+            case ORANGE -> txn.setStatus(TransactionStatus.PENDING); // awaiting OTP
+            case RED -> txn.setStatus(TransactionStatus.BLOCKED);
         }
 
         Transaction saved = transactionRepository.save(txn);
@@ -86,15 +87,6 @@ public class TransactionService {
                 saved.getId(),
                 saved.getStatus().name(),
                 saved.getRiskLevel().name(),
-                decision);
-    }
-
-    // TEMPORARY stand-in for the ML pipeline. Replace this whole method later.
-    private RiskLevel placeholderRisk(BigDecimal amount) {
-        if (amount.compareTo(new BigDecimal("10000")) < 0)
-            return RiskLevel.GREEN;
-        if (amount.compareTo(new BigDecimal("50000")) < 0)
-            return RiskLevel.ORANGE;
-        return RiskLevel.RED;
+                ml.decision());
     }
 }
