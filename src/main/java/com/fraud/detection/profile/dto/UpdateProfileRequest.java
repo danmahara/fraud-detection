@@ -8,6 +8,8 @@ public record UpdateProfileRequest(
         @NotNull BigDecimal homeLat,
         @NotNull BigDecimal homeLon,
         @NotNull LocalDate dob,
-        @NotNull String gender // "M" or "F" (matches the ML model's encoding)
+        @NotNull String gender, // "M" or "F" (matches the ML model's encoding)
+        String deviceId
+
 ) {
 }

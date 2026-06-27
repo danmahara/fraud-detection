@@ -55,6 +55,10 @@ public class ProfileController {
             profile.setCityPop(50000); // median-ish city population
         }
 
+        if (request.deviceId() != null) {
+            profile.setLastKnownDevice(request.deviceId());
+        }
+
         UserProfile saved = userProfileRepository.save(profile);
         return toResponse(saved);
     }
@@ -65,9 +69,14 @@ public class ProfileController {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "User not found"));
+
+        // Create an empty profile on first access if one doesn't exist yet.
         return userProfileRepository.findByUser_Id(user.getId())
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND, "Profile not found"));
+                .orElseGet(() -> {
+                    UserProfile p = new UserProfile();
+                    p.setUser(user);
+                    return userProfileRepository.save(p);
+                });
     }
 
     private ProfileResponse toResponse(UserProfile p) {
