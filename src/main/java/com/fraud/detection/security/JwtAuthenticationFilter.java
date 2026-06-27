@@ -54,7 +54,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 // logger.warn(">>> authentication SET for " + email); // step 3
             }
         } catch (Exception e) {
-            // logger.warn(">>> token check FAILED: " + e.getMessage(), e); // the real
+            logger.warn(">>> token check FAILED: " + e.getMessage(), e); // the real
             // reason
             SecurityContextHolder.clearContext();
         }

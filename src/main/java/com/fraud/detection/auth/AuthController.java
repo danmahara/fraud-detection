@@ -1,5 +1,7 @@
 package com.fraud.detection.auth;
 
+import java.util.Optional;
+
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -10,6 +12,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.fraud.detection.auth.dto.LoginRequest;
 import com.fraud.detection.auth.dto.LoginResponse;
+import com.fraud.detection.entity.User;
+import com.fraud.detection.repository.UserRepository;
 import com.fraud.detection.security.JwtService;
 
 @RestController
@@ -18,10 +22,13 @@ public class AuthController {
 
     private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
+    private final UserRepository userRepository;
 
-    public AuthController(AuthenticationManager authenticationManager, JwtService jwtService) {
+    public AuthController(AuthenticationManager authenticationManager, JwtService jwtService,
+            UserRepository userRepository) {
         this.authenticationManager = authenticationManager;
         this.jwtService = jwtService;
+        this.userRepository = userRepository;
     }
 
     @PostMapping("/login")
@@ -30,7 +37,9 @@ public class AuthController {
         Authentication auth = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.email(), request.password()));
 
-        String token = jwtService.generateToken(auth.getName());
+        Optional<User> userOpt = userRepository.findByEmail(auth.getName());
+        User user = userOpt.get();
+        String token = jwtService.generateToken(user);
 
         return new LoginResponse(token);
     }

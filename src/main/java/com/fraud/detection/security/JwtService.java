@@ -5,6 +5,8 @@ import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import com.fraud.detection.entity.User;
+
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
@@ -25,11 +27,13 @@ public class JwtService {
     }
 
     // Build a signed token whose "subject" is the user's email.
-    public String generateToken(String username) {
+    public String generateToken(User user) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + expirationMs);
         return Jwts.builder()
-                .subject(username) // who this token belongs to
+                .subject(user.getEmail()) // who this token belongs to
+                .claim("name", user.getName()) // <-- the name
+                .claim("role", user.getRole().name())
                 .issuedAt(now) // when it was created
                 .expiration(expiry) // when it expires
                 .signWith(key) // sign it so nobody can tamper with it
