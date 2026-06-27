@@ -2,6 +2,11 @@ package com.fraud.detection.entity;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import com.fraud.detection.entity.enums.Channel;
 import com.fraud.detection.entity.enums.RiskLevel;
@@ -93,6 +98,10 @@ public class Transaction {
 
     @Column(name = "xgboost_probability")
     private Double xgboostProbability;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "flag_reasons", nullable = false, columnDefinition = "jsonb")
+    private List<String> flagReasons = new ArrayList<>();
 
     @Enumerated(EnumType.STRING)
     @Column(name = "risk_level", length = 20)

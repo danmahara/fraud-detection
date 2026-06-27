@@ -1,5 +1,7 @@
 package com.fraud.detection.admin.controllers;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 import org.springframework.data.domain.PageRequest;
@@ -21,56 +23,68 @@ import com.fraud.detection.transaction.TransactionRepository;
 @PreAuthorize("hasRole('ADMIN')") // every method here is admin-only
 public class AdminController {
 
-    private final TransactionRepository transactionRepository;
+        private final TransactionRepository transactionRepository;
 
-    public AdminController(TransactionRepository transactionRepository) {
-        this.transactionRepository = transactionRepository;
-    }
+        public AdminController(TransactionRepository transactionRepository) {
+                this.transactionRepository = transactionRepository;
+        }
 
-    // GET /api/admin/transactions?limit=50 -> most recent transactions, newest
-    // first.
-    @GetMapping("/transactions")
-    public List<AdminTransactionView> recentTransactions(
-            @RequestParam(defaultValue = "50") int limit) {
+        // GET /api/admin/transactions?limit=50 -> most recent transactions, newest
+        // first.
+        @GetMapping("/transactions")
+        public List<AdminTransactionView> recentTransactions(
+                        @RequestParam(defaultValue = "50") int limit) {
 
-        List<Transaction> txns = transactionRepository.findRecentWithAccount(PageRequest.of(0, limit));
+                List<Transaction> txns = transactionRepository.findRecentWithAccount(PageRequest.of(0, limit));
 
-        return txns.stream()
-                .map(t -> new AdminTransactionView(
-                        t.getId(),
-                        t.getAccount().getUser().getEmail(),
-                        t.getAmount(),
-                        t.getMerchant(),
-                        t.getMerchantCategory(),
-                        t.getChannel() != null ? t.getChannel().name() : null,
-                        t.getStatus().name(),
-                        t.getRiskLevel() != null ? t.getRiskLevel().name() : null,
-                        t.getFraudScore(),
-                        t.getTransactionTime()))
-                .toList();
-    }
+                return txns.stream()
+                                .map(t -> new AdminTransactionView(
+                                                t.getId(),
+                                                t.getAccount().getUser().getEmail(),
+                                                t.getAmount(),
+                                                t.getMerchant(),
+                                                t.getMerchantCategory(),
+                                                t.getChannel() != null ? t.getChannel().name() : null,
+                                                t.getStatus().name(),
+                                                t.getRiskLevel() != null ? t.getRiskLevel().name() : null,
+                                                t.getFraudScore(),
+                                                t.getFlagReasons(),
+                                                t.getTransactionTime()))
+                                .toList();
+        }
 
-    @GetMapping("/stats")
-    public StatsResponse stats() {
-        long total = transactionRepository.count();
-        long flagged = transactionRepository.countFlagged();
+        @GetMapping("/stats")
+        public StatsResponse stats() {
+                long total = transactionRepository.count();
+                long flagged = transactionRepository.countAllFlagged();
+                long blocked = transactionRepository.countByRiskLevelEquals(RiskLevel.RED);
 
-        // Convert the [label, count] rows into clean DTO items.
-        List<CountItem> byRisk = transactionRepository.countByRiskLevel().stream()
-                .map(row -> new CountItem(
-                        row[0] != null ? ((RiskLevel) row[0]).name() : "UNKNOWN",
-                        (long) row[1]))
-                .toList();
+                // Start of today (UTC). Adjust the zone if you want local midnight.
+                OffsetDateTime startOfToday = OffsetDateTime.now(ZoneOffset.UTC)
+                                .toLocalDate().atStartOfDay().atOffset(ZoneOffset.UTC);
 
-        List<CountItem> byCategory = transactionRepository.countByCategory().stream()
-                .map(row -> new CountItem(
-                        row[0] != null ? (String) row[0] : "unknown",
-                        (long) row[1]))
-                .toList();
+                long todayTotal = transactionRepository.countByCreatedAtAfter(startOfToday);
+                long todayFlagged = transactionRepository.countFlaggedSince(startOfToday);
+                long todayBlocked = transactionRepository
+                                .countByRiskLevelAndCreatedAtAfter(RiskLevel.RED, startOfToday);
 
-        double flaggedRate = total > 0 ? (double) flagged / total : 0.0;
+                List<CountItem> byRisk = transactionRepository.countByRiskLevel().stream()
+                                .map(row -> new CountItem(
+                                                row[0] != null ? ((RiskLevel) row[0]).name() : "UNKNOWN",
+                                                (long) row[1]))
+                                .toList();
 
-        return new StatsResponse(total, flagged, flaggedRate, byRisk, byCategory);
-    }
+                List<CountItem> byCategory = transactionRepository.countByCategory().stream()
+                                .map(row -> new CountItem(
+                                                row[0] != null ? (String) row[0] : "unknown",
+                                                (long) row[1]))
+                                .toList();
+
+                double flaggedRate = total > 0 ? (double) flagged / total : 0.0;
+
+                return new StatsResponse(total, flagged, blocked,
+                                todayTotal, todayFlagged, todayBlocked,
+                                flaggedRate, byRisk, byCategory);
+        }
 
 }

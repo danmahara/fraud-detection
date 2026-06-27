@@ -138,6 +138,7 @@ public class TransactionService {
                 txn.setIsolationForestScore(ml.isolationForestScore());
                 txn.setXgboostProbability(ml.xgboostProbability());
                 txn.setFraudScore(finalScore); // store the BLENDED score
+                txn.setFlagReasons(context.reasons());
 
                 String decision;
                 switch (risk) {

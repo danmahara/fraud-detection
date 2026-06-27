@@ -8,14 +8,23 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 
 import com.fraud.detection.entity.Transaction;
+import com.fraud.detection.entity.enums.RiskLevel;
 
 public interface TransactionRepository extends JpaRepository<Transaction, Long> {
+
+        // @Query("""
+        // SELECT t FROM Transaction t
+        // JOIN FETCH t.account a
+        // JOIN FETCH a.user
+        // ORDER BY t.transactionTime DESC
+        // """)
+        // List<Transaction> findRecentWithAccount(Pageable pageable);
 
         @Query("""
                         SELECT t FROM Transaction t
                         JOIN FETCH t.account a
                         JOIN FETCH a.user
-                        ORDER BY t.transactionTime DESC
+                        ORDER BY t.createdAt DESC
                         """)
         List<Transaction> findRecentWithAccount(Pageable pageable);
 
@@ -50,4 +59,31 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
 
         // Velocity check: how many transactions this account made since a cutoff time.
         long countByAccountIdAndTransactionTimeAfter(Long accountId, OffsetDateTime after);
+
+        // ############ For admin dashboard stats ############
+
+        // Count rows at one specific risk level (whole table). Distinct name to avoid
+        // clashing with the grouped countByRiskLevel() used for the chart.
+        long countByRiskLevelEquals(RiskLevel riskLevel);
+
+        // Count flagged (ORANGE or RED) — whole table.
+        @Query("""
+                        SELECT COUNT(t) FROM Transaction t
+                        WHERE t.riskLevel IN (com.fraud.detection.entity.enums.RiskLevel.ORANGE,
+                                              com.fraud.detection.entity.enums.RiskLevel.RED)
+                        """)
+        long countAllFlagged();
+
+        // --- "Today" variants: count rows created since a cutoff (start of today) ---
+        long countByCreatedAtAfter(OffsetDateTime cutoff);
+
+        long countByRiskLevelAndCreatedAtAfter(RiskLevel riskLevel, OffsetDateTime cutoff);
+
+        @Query("""
+                        SELECT COUNT(t) FROM Transaction t
+                        WHERE t.createdAt >= :cutoff
+                          AND t.riskLevel IN (com.fraud.detection.entity.enums.RiskLevel.ORANGE,
+                                              com.fraud.detection.entity.enums.RiskLevel.RED)
+                        """)
+        long countFlaggedSince(@org.springframework.data.repository.query.Param("cutoff") OffsetDateTime cutoff);
 }
