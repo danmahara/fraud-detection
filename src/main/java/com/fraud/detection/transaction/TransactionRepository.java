@@ -18,4 +18,32 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
             """)
     List<Transaction> findRecentWithAccount(Pageable pageable);
 
+    // Count of transactions grouped by risk level -> [["GREEN", 42], ["RED", 5],
+    // ...]
+    @Query("""
+            SELECT t.riskLevel, COUNT(t)
+            FROM Transaction t
+            GROUP BY t.riskLevel
+            """)
+    List<Object[]> countByRiskLevel();
+
+    // Count grouped by merchant category -> [["grocery_pos", 30], ...]
+    @Query("""
+            SELECT t.merchantCategory, COUNT(t)
+            FROM Transaction t
+            GROUP BY t.merchantCategory
+            ORDER BY COUNT(t) DESC
+            """)
+    List<Object[]> countByCategory();
+
+    // How many transactions are flagged (ORANGE/RED) vs not.
+    @Query("""
+            SELECT COUNT(t)
+            FROM Transaction t
+            WHERE t.riskLevel IN (com.fraud.detection.entity.enums.RiskLevel.ORANGE,
+                                  com.fraud.detection.entity.enums.RiskLevel.RED)
+            """)
+    long countFlagged();
+
+    long count(); // inherited from JpaRepository, listed here for clarity
 }

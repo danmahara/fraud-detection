@@ -10,7 +10,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.fraud.detection.admin.dto.AdminTransactionView;
+import com.fraud.detection.admin.dto.StatsResponse;
+import com.fraud.detection.admin.dto.StatsResponse.CountItem;
 import com.fraud.detection.entity.Transaction;
+import com.fraud.detection.entity.enums.RiskLevel;
 import com.fraud.detection.transaction.TransactionRepository;
 
 @RestController
@@ -46,4 +49,28 @@ public class AdminController {
                         t.getTransactionTime()))
                 .toList();
     }
+
+    @GetMapping("/stats")
+    public StatsResponse stats() {
+        long total = transactionRepository.count();
+        long flagged = transactionRepository.countFlagged();
+
+        // Convert the [label, count] rows into clean DTO items.
+        List<CountItem> byRisk = transactionRepository.countByRiskLevel().stream()
+                .map(row -> new CountItem(
+                        row[0] != null ? ((RiskLevel) row[0]).name() : "UNKNOWN",
+                        (long) row[1]))
+                .toList();
+
+        List<CountItem> byCategory = transactionRepository.countByCategory().stream()
+                .map(row -> new CountItem(
+                        row[0] != null ? (String) row[0] : "unknown",
+                        (long) row[1]))
+                .toList();
+
+        double flaggedRate = total > 0 ? (double) flagged / total : 0.0;
+
+        return new StatsResponse(total, flagged, flaggedRate, byRisk, byCategory);
+    }
+
 }
