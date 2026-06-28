@@ -4,6 +4,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -12,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.fraud.detection.admin.dto.AdminTransactionView;
+import com.fraud.detection.admin.dto.PagedAdminTransactions;
 import com.fraud.detection.admin.dto.StatsResponse;
 import com.fraud.detection.admin.dto.StatsResponse.CountItem;
 import com.fraud.detection.entity.Transaction;
@@ -87,4 +89,30 @@ public class AdminController {
                                 flaggedRate, byRisk, byCategory);
         }
 
+        // GET /api/admin/transactions/page?page=0&size=20 -> paginated all
+        // transactions.
+        @GetMapping("/transactions/page")
+        public PagedAdminTransactions transactionsPage(
+                        @RequestParam(defaultValue = "0") int page,
+                        @RequestParam(defaultValue = "10") int size) {
+
+                Page<AdminTransactionView> result = transactionRepository
+                                .findAllPaged(PageRequest.of(page, size))
+                                .map(t -> new AdminTransactionView(
+                                                t.getId(),
+                                                t.getAccount().getUser().getEmail(),
+                                                t.getAmount(),
+                                                t.getMerchant(),
+                                                t.getMerchantCategory(),
+                                                t.getChannel() == null ? null : t.getChannel().name(),
+                                                t.getStatus().name(),
+                                                t.getRiskLevel() == null ? null : t.getRiskLevel().name(),
+                                                t.getFraudScore(),
+                                                t.getFlagReasons(),
+                                                t.getTransactionTime()));
+
+                return new PagedAdminTransactions(
+                                result.getContent(), result.getNumber(), result.getSize(),
+                                result.getTotalElements(), result.getTotalPages());
+        }
 }
