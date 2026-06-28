@@ -131,14 +131,14 @@ public class TransactionService {
                 // --- Blend: context can escalate, not rescue ML's strong catches ---
                 double finalScore = Math.min(1.0, mlScore + context.score() * CONTEXT_BOOST);
 
-                // ...and a strong context score also sets a FLOOR, so behavioural red
-                // flags can force a step-up even when the ML model is calm. This is how
-                // real risk-based step-up auth works: enough behavioural anomalies
-                // demand verification regardless of the transaction's intrinsic look.
-                if (context.score() >= 0.55) {
-                        finalScore = Math.max(finalScore, 0.90); // -> at least ORANGE (step-up)
-                } else if (context.score() >= 0.35) {
-                        finalScore = Math.max(finalScore, 0.55); // -> at least YELLOW (monitor)
+                // Behavioral escalation floor. A SINGLE strong signal lifts the
+                // transaction to at least YELLOW (monitor); MULTIPLE stacking signals
+                // escalate to ORANGE (step-up verification). This mirrors risk-based
+                // auth: one anomaly is suspicious, several together demand verification.
+                if (context.score() >= 0.45) {
+                        finalScore = Math.max(finalScore, 0.90); // -> ORANGE (step-up / OTP)
+                } else if (context.score() >= 0.22) {
+                        finalScore = Math.max(finalScore, 0.55); // -> YELLOW (monitor)
                 }
 
                 // Log the breakdown so we can see the layers working (and for the demo).

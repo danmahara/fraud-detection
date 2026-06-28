@@ -3,6 +3,7 @@ package com.fraud.detection.merchant;
 import java.util.List;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -82,9 +83,10 @@ public class AdminMerchantController {
 
     // --- Edit ---
     @PutMapping("/merchants/{id}")
+    @Transactional
     public MerchantView updateMerchant(@PathVariable Long id,
             @Valid @RequestBody MerchantRequest req) {
-        Merchant m = merchantRepository.findById(id)
+        Merchant m = merchantRepository.findByIdWithCategory(id) // <-- was findById
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "Merchant not found"));
 
