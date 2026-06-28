@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.fraud.detection.entity.Account;
+import com.fraud.detection.entity.Merchant;
 import com.fraud.detection.entity.Transaction;
 import com.fraud.detection.entity.UserProfile;
 import com.fraud.detection.entity.enums.RiskLevel;
@@ -19,6 +20,7 @@ import com.fraud.detection.ml.MlScoringClient;
 import com.fraud.detection.ml.dto.MlPredictRequest;
 import com.fraud.detection.ml.dto.MlPredictResponse;
 import com.fraud.detection.repository.AccountRepository;
+import com.fraud.detection.repository.MerchantRepository;
 import com.fraud.detection.repository.UserProfileRepository;
 import com.fraud.detection.transaction.dto.ContextResult;
 import com.fraud.detection.transaction.dto.CreateTransactionRequest;
@@ -37,6 +39,8 @@ public class TransactionService {
 
         private static final DateTimeFormatter ML_TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
+        private final MerchantRepository merchantRepository; // <-- NEW
+
         // How much context can push the score up. 0.5 means a maximally suspicious
         // context (score 1.0) adds 0.5 to the ML score.
         private static final double CONTEXT_BOOST = 0.5;
@@ -45,12 +49,14 @@ public class TransactionService {
                         TransactionRepository transactionRepository,
                         UserProfileRepository userProfileRepository,
                         MlScoringClient mlScoringClient,
-                        ContextScorer contextScorer) { // <-- NEW param
+                        ContextScorer contextScorer,
+                        MerchantRepository merchantRepository) { // <-- NEW param
                 this.accountRepository = accountRepository;
                 this.transactionRepository = transactionRepository;
                 this.userProfileRepository = userProfileRepository;
                 this.mlScoringClient = mlScoringClient;
                 this.contextScorer = contextScorer;
+                this.merchantRepository = merchantRepository;
         }
 
         @Transactional
@@ -71,6 +77,14 @@ public class TransactionService {
                                                 HttpStatus.UNPROCESSABLE_ENTITY,
                                                 "No cardholder profile on file for scoring"));
 
+                // --- Resolve the merchant (by id, phone, or email) ---
+                Merchant merchant = resolveMerchant(request);
+
+                // The merchant supplies the category + location the scorer needs.
+                String categoryCode = merchant.getCategory().getCode(); // e.g. "grocery_pos"
+                double merchLat = merchant.getLat().doubleValue();
+                double merchLon = merchant.getLon().doubleValue();
+
                 OffsetDateTime txnTime = request.transactionTime() != null
                                 ? request.transactionTime()
                                 : OffsetDateTime.now();
@@ -78,34 +92,35 @@ public class TransactionService {
                 Transaction txn = new Transaction();
                 txn.setAccount(account);
                 txn.setAmount(request.amount());
-                txn.setMerchant(request.merchant());
-                txn.setMerchantCategory(request.merchantCategory());
+                txn.setMerchant(merchant.getName()); // from the merchant
+                txn.setMerchantCategory(categoryCode); // from the merchant's category
                 txn.setChannel(request.channel());
-                txn.setLocationLat(request.merchLat());
-                txn.setLocationLon(request.merchLon());
+                txn.setLocationLat(merchant.getLat()); // from the merchant
+                txn.setLocationLon(merchant.getLon()); // from the merchant
                 txn.setDeviceId(request.deviceId());
                 txn.setTransactionTime(txnTime);
                 txn.setStatus(TransactionStatus.PENDING);
 
-                // --- Layer 1: ML scoring (unchanged) ---
+                // --- Layer 1: ML scoring ---
                 MlPredictRequest mlRequest = new MlPredictRequest(
                                 txnTime.format(ML_TS),
                                 profile.getDob().toString(),
                                 request.amount().doubleValue(),
-                                request.merchantCategory(),
+                                categoryCode, // merchant's category
                                 profile.getHomeLat().doubleValue(),
                                 profile.getHomeLon().doubleValue(),
-                                request.merchLat().doubleValue(),
-                                request.merchLon().doubleValue(),
+                                merchLat, // merchant's location
+                                merchLon,
                                 profile.getGender(),
                                 profile.getCityPop());
+
                 MlPredictResponse ml = mlScoringClient.predict(mlRequest);
                 double mlScore = ml.fraudScore();
 
-                // --- Layers 2 & 3: context scoring (NEW) ---
+                // --- Layers 2 & 3: context scoring ---
                 double distanceKm = haversineKm(
                                 profile.getHomeLat().doubleValue(), profile.getHomeLon().doubleValue(),
-                                request.merchLat().doubleValue(), request.merchLon().doubleValue());
+                                merchLat, merchLon); // merchant's location
 
                 // velocity: transactions for this account in the last 5 minutes of REAL time
                 long recentCount = transactionRepository.countByAccountIdAndTransactionTimeAfter(
@@ -186,5 +201,27 @@ public class TransactionService {
                                 + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
                                                 * Math.sin(dLon / 2) * Math.sin(dLon / 2);
                 return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        // Resolve the merchant from the request: id preferred, then phone, then email.
+        private Merchant resolveMerchant(CreateTransactionRequest request) {
+                if (request.merchantId() != null) {
+                        return merchantRepository.findByIdWithCategory(request.merchantId())
+                                        .orElseThrow(() -> new ResponseStatusException(
+                                                        HttpStatus.NOT_FOUND, "Merchant not found"));
+                }
+                if (request.merchantPhone() != null && !request.merchantPhone().isBlank()) {
+                        return merchantRepository.findByPhone(request.merchantPhone())
+                                        .orElseThrow(() -> new ResponseStatusException(
+                                                        HttpStatus.NOT_FOUND, "No merchant with that phone"));
+                }
+                if (request.merchantEmail() != null && !request.merchantEmail().isBlank()) {
+                        return merchantRepository.findByEmail(request.merchantEmail())
+                                        .orElseThrow(() -> new ResponseStatusException(
+                                                        HttpStatus.NOT_FOUND, "No merchant with that email"));
+                }
+                throw new ResponseStatusException(
+                                HttpStatus.BAD_REQUEST,
+                                "Provide a merchantId, merchantPhone, or merchantEmail");
         }
 }
