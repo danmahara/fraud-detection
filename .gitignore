@@ -31,5 +31,8 @@ build/
 
 ### VS Code ###
 .vscode/
+/ml-service/__pycache__/
+*.pyc
+/ml-service/.pytest_cache/
 
 src/main/resources/application.properties
