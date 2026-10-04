@@ -1,5 +1,7 @@
 package com.fraud.detection.auth;
 
+import java.math.BigDecimal;
+import java.security.SecureRandom;
 import java.util.Optional;
 
 import org.springframework.http.HttpStatus;
@@ -23,8 +25,10 @@ import com.fraud.detection.entity.enums.UserRole;
 import com.fraud.detection.repository.UserProfileRepository;
 import com.fraud.detection.repository.UserRepository;
 import com.fraud.detection.security.JwtService;
-
+import com.fraud.detection.repository.AccountRepository;
+import com.fraud.detection.entity.Account;
 import jakarta.validation.Valid;
+import com.fraud.detection.entity.enums.AccountStatus;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -33,18 +37,24 @@ public class AuthController {
     private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
     private final UserRepository userRepository;
-    private final UserProfileRepository userProfileRepository; // NEW
-    private final PasswordEncoder passwordEncoder; // NEW
+    private final UserProfileRepository userProfileRepository;
+
+    private final PasswordEncoder passwordEncoder;
+
+    private final AccountRepository accountRepository; // NEW
+    private static final SecureRandom RANDOM = new SecureRandom();
 
     public AuthController(AuthenticationManager authenticationManager,
             JwtService jwtService,
             UserRepository userRepository,
             UserProfileRepository userProfileRepository,
+            AccountRepository accountRepository,
             PasswordEncoder passwordEncoder) {
         this.authenticationManager = authenticationManager;
         this.jwtService = jwtService;
         this.userRepository = userRepository;
         this.userProfileRepository = userProfileRepository;
+        this.accountRepository = accountRepository;
         this.passwordEncoder = passwordEncoder;
     }
 
@@ -80,10 +90,30 @@ public class AuthController {
         profile.setUser(user);
         userProfileRepository.save(profile);
 
+        // Every user also gets a bank account.
+        Account account = new Account();
+        account.setUser(user);
+        account.setAccountNumber(generateAccountNumber());
+        account.setBalance(BigDecimal.ZERO);
+        account.setStatus(AccountStatus.ACTIVE);
+        accountRepository.save(account);
+
         // No token here — the user logs in separately. Cleaner, more demoable flow.
         return new RegisterResponse(
                 user.getId(),
                 user.getEmail(),
                 "Account created successfully. Please log in.");
+    }
+
+    private String generateAccountNumber() {
+        String number;
+        do {
+            StringBuilder sb = new StringBuilder(16);
+            for (int i = 0; i < 16; i++) {
+                sb.append(RANDOM.nextInt(10));
+            }
+            number = sb.toString();
+        } while (accountRepository.existsByAccountNumber(number));
+        return number;
     }
 }
