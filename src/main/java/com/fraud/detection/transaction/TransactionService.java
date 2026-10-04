@@ -129,7 +129,7 @@ public class TransactionService {
                 ContextResult context = contextScorer.score(txn, profile, distanceKm, recentCount);
 
                 // --- Blend: context can escalate, not rescue ML's strong catches ---
-                double finalScore = Math.min(1.0, mlScore + context.score() * CONTEXT_BOOST);
+                double finalScore = blend(mlScore, context.score());
 
                 // Behavioral escalation floor. A SINGLE strong signal lifts the
                 // transaction to at least YELLOW (monitor); MULTIPLE stacking signals
@@ -182,7 +182,7 @@ public class TransactionService {
         }
 
         // Maps the blended score to a risk band (mirrors the ML service bands).
-        private RiskLevel bandFor(double score) {
+        static RiskLevel bandFor(double score) {
                 if (score < 0.50)
                         return RiskLevel.GREEN;
                 if (score < 0.80)
@@ -224,4 +224,16 @@ public class TransactionService {
                                 HttpStatus.BAD_REQUEST,
                                 "Provide a merchantId, merchantPhone, or merchantEmail");
         }
+
+        // add inside TransactionService
+        static double blend(double mlScore, double contextScore) {
+                double finalScore = Math.min(1.0, mlScore + contextScore * CONTEXT_BOOST);
+                if (contextScore >= 0.45) {
+                        finalScore = Math.max(finalScore, 0.90);
+                } else if (contextScore >= 0.22) {
+                        finalScore = Math.max(finalScore, 0.55);
+                }
+                return finalScore;
+        }
+
 }
